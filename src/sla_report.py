@@ -23,6 +23,25 @@ REQUIRED_COLUMNS = [
 
 OPEN_STATUSES = {"open", "in progress", "pending", "new", "on hold"}
 
+def classify_sla(status, target_hours, measured_hours):
+    """Classify ticket SLA status using its target and measured duration."""
+
+    if target_hours is None or measured_hours is None:
+        return "Unknown"
+
+    if target_hours <= 0 or measured_hours < 0:
+        return "Unknown"
+
+    status = (status or "").strip().lower()
+
+    if status == "resolved":
+        return "Met" if measured_hours <= target_hours else "Breached"
+
+    if status in OPEN_STATUSES:
+        return "Within SLA" if measured_hours <= target_hours else "Breached"
+
+    return "Unknown"
+
 
 def parse_number(value, field_name, row_number, warnings, required=False):
     """Convert a field to a number and report invalid or missing values."""
@@ -132,18 +151,7 @@ def main():
                 )
                 measured_hours = None
 
-            if target_hours is None or measured_hours is None:
-                sla_status = "Unknown"
-            elif status == "resolved":
-                sla_status = (
-                    "Met" if measured_hours <= target_hours else "Breached"
-                )
-            else:
-                sla_status = (
-                    "Within SLA"
-                    if measured_hours <= target_hours
-                    else "Breached"
-                )
+            sla_status = classify_sla(status, target_hours, measured_hours)
 
             analyzed_rows.append({
                 **row,
