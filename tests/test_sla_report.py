@@ -1,10 +1,13 @@
 
 import unittest
-
+import tempfile
+import zipfile
+from pathlib import Path
 from src.sla_report import (
     classify_sla,
     validate_ticket_metadata,
     validate_ticket_dates,
+    generate_excel_report,
 )
 
 
@@ -177,6 +180,66 @@ class TestTicketDateValidation(unittest.TestCase):
                 for issue in issues
             )
         )
+
+class TestExcelReportGeneration(unittest.TestCase):
+
+    def test_workbook_contains_expected_sheets(self):
+        sample_rows = [
+            {
+                "Ticket_ID": "TEST001",
+                "Created_Date": "2026-10-01 08:00",
+                "Resolved_Date": "2026-10-01 10:00",
+                "Priority": "High",
+                "Status": "Resolved",
+                "Category": "Network",
+                "Assignment_Group": "Team-A",
+                "Site": "Test-Site",
+                "SLA_Target_Hours": "4",
+                "Resolution_Hours": "2",
+                "Elapsed_Hours": "",
+                "SLA_Status": "Met",
+            },
+            {
+                "Ticket_ID": "TEST002",
+                "Created_Date": "2026-10-01 09:00",
+                "Resolved_Date": "",
+                "Priority": "Critical",
+                "Status": "Open",
+                "Category": "Connectivity",
+                "Assignment_Group": "Team-B",
+                "Site": "Test-Site",
+                "SLA_Target_Hours": "4",
+                "Resolution_Hours": "",
+                "Elapsed_Hours": "8",
+                "SLA_Status": "Breached",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = generate_excel_report(
+                sample_rows, [], temp_dir
+            )
+
+            self.assertTrue(Path(output_file).is_file())
+
+            with zipfile.ZipFile(output_file) as workbook:
+                workbook_xml = workbook.read(
+                    "xl/workbook.xml"
+                ).decode("utf-8")
+
+            expected_sheets = [
+                "Summary",
+                "Tickets",
+                "Breaches",
+                "Data Quality",
+            ]
+
+            for sheet_name in expected_sheets:
+                with self.subTest(sheet=sheet_name):
+                    self.assertIn(
+                        f'name="{sheet_name}"',
+                        workbook_xml,
+                    )
 
 if __name__ == "__main__":
     unittest.main()

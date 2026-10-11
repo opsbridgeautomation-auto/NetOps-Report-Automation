@@ -2,7 +2,7 @@ from datetime import datetime
 import csv
 from collections import Counter
 from pathlib import Path
-
+import xlsxwriter
 
 # Find the project directory regardless of where the script is launched.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -173,6 +173,319 @@ def parse_number(value, field_name, row_number, warnings, required=False):
             f"has an invalid number: {raw_value!r}."
         )
         return None
+
+def generate_excel_report(analyzed_rows, warnings, report_dir):
+    """Create a formatted Excel workbook for SLA reporting."""
+
+    report_dir = Path(report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    output_file = report_dir / "sla_report.xlsx"
+    workbook = xlsxwriter.Workbook(str(output_file))
+
+    # Workbook styles
+    title_fmt = workbook.add_format({
+        "bold": True,
+        "font_size": 18,
+        "font_color": "white",
+        "bg_color": "#17365D",
+        "align": "left",
+        "valign": "vcenter",
+    })
+
+    subtitle_fmt = workbook.add_format({
+        "italic": True,
+        "font_color": "#666666",
+    })
+
+    header_fmt = workbook.add_format({
+        "bold": True,
+        "font_color": "white",
+        "bg_color": "#4472C4",
+        "border": 1,
+        "text_wrap": True,
+    })
+
+    label_fmt = workbook.add_format({
+        "bold": True,
+        "border": 1,
+        "bg_color": "#D9EAF7",
+    })
+
+    value_fmt = workbook.add_format({"border": 1})
+    number_fmt = workbook.add_format({
+        "border": 1,
+        "num_format": "0",
+    })
+    percent_fmt = workbook.add_format({
+        "border": 1,
+        "num_format": "0.0%",
+    })
+
+    breach_fmt = workbook.add_format({
+        "font_color": "#9C0006",
+        "bg_color": "#FFC7CE",
+    })
+
+    success_fmt = workbook.add_format({
+        "font_color": "#006100",
+        "bg_color": "#C6EFCE",
+    })
+
+    warning_fmt = workbook.add_format({
+        "font_color": "#9C6500",
+        "bg_color": "#FFEB9C",
+    })
+
+    # Calculate the summary directly from analyzed tickets.
+    resolved_rows = [
+        row for row in analyzed_rows
+        if (row.get("Status") or "").strip().lower() == "resolved"
+    ]
+
+    open_rows = [
+        row for row in analyzed_rows
+        if (row.get("Status") or "").strip().lower() in OPEN_STATUSES
+    ]
+
+    resolved_known = [
+        row for row in resolved_rows
+        if row.get("SLA_Status") in {"Met", "Breached"}
+    ]
+
+    resolved_met = sum(
+        row.get("SLA_Status") == "Met"
+        for row in resolved_known
+    )
+
+    resolved_breached = sum(
+        row.get("SLA_Status") == "Breached"
+        for row in resolved_known
+    )
+
+    open_breached = sum(
+        row.get("SLA_Status") == "Breached"
+        for row in open_rows
+    )
+
+    unknown_sla = sum(
+        row.get("SLA_Status") == "Unknown"
+        for row in analyzed_rows
+    )
+
+    compliance = (
+        resolved_met / len(resolved_known)
+        if resolved_known
+        else None
+    )
+
+    priority_counts = Counter(
+        (row.get("Priority") or "").strip() or "Unspecified"
+        for row in analyzed_rows
+    )
+
+    # --------------------------------------------------
+    # Sheet 1: Management Summary
+    # --------------------------------------------------
+    summary = workbook.add_worksheet("Summary")
+    summary.hide_gridlines(2)
+    summary.merge_range("A1:E1", "OPSBRIDGE SLA REPORT", title_fmt)
+    summary.set_row(0, 30)
+    summary.write("A2", "IT Operations Reporting", subtitle_fmt)
+
+    summary.write("A3", "Metric", header_fmt)
+    summary.write("B3", "Value", header_fmt)
+
+    metrics = [
+        ("Total tickets", len(analyzed_rows)),
+        ("Resolved tickets", len(resolved_rows)),
+        ("Open/in-progress tickets", len(open_rows)),
+        ("Resolved SLA met", resolved_met),
+        ("Resolved SLA breaches", resolved_breached),
+        ("Open tickets breaching SLA", open_breached),
+        (
+            "Resolved SLA compliance",
+            compliance if compliance is not None else "N/A",
+        ),
+        ("Tickets with unknown SLA status", unknown_sla),
+    ]
+
+    for row_index, (label, value) in enumerate(metrics, start=3):
+        summary.write_string(row_index, 0, label, label_fmt)
+
+        if isinstance(value, (int, float)):
+            fmt = (
+                percent_fmt
+                if label == "Resolved SLA compliance"
+                else number_fmt
+            )
+            summary.write_number(row_index, 1, value, fmt)
+        else:
+            summary.write_string(row_index, 1, str(value), value_fmt)
+
+    summary.set_column("A:A", 34)
+    summary.set_column("B:B", 18)
+
+    # Priority breakdown
+    summary.write("D3", "Priority", header_fmt)
+    summary.write("E3", "Ticket Count", header_fmt)
+
+    priorities = sorted(priority_counts.items())
+
+    for row_index, (priority, count) in enumerate(priorities, start=3):
+        summary.write_string(row_index, 3, str(priority), value_fmt)
+        summary.write_number(row_index, 4, count, number_fmt)
+
+    summary.set_column("D:D", 20)
+    summary.set_column("E:E", 15)
+
+    if priorities:
+        chart = workbook.add_chart({"type": "column"})
+
+        chart.add_series({
+            "name": "Ticket Count",
+            "categories": [
+                "Summary", 3, 3, 2 + len(priorities), 3
+            ],
+            "values": [
+                "Summary", 3, 4, 2 + len(priorities), 4
+            ],
+            "data_labels": {"value": True},
+        })
+
+        chart.set_title({"name": "Tickets by Priority"})
+        chart.set_x_axis({"name": "Priority"})
+        chart.set_y_axis({
+            "name": "Tickets",
+            "min": 0,
+            "major_gridlines": {"visible": False},
+        })
+        chart.set_legend({"none": True})
+        chart.set_size({"width": 520, "height": 300})
+
+        summary.insert_chart("D10", chart)
+
+    # --------------------------------------------------
+    # Sheet 2: All Analyzed Tickets
+    # --------------------------------------------------
+    ticket_columns = (
+        list(analyzed_rows[0].keys())
+        if analyzed_rows
+        else REQUIRED_COLUMNS + ["SLA_Status"]
+    )
+
+    # Keep column names unique in the output.
+    ticket_columns = list(dict.fromkeys(ticket_columns))
+
+    tickets_sheet = workbook.add_worksheet("Tickets")
+    tickets_sheet.freeze_panes(1, 0)
+
+    tickets_sheet.write_row(0, 0, ticket_columns, header_fmt)
+
+    for row_index, row in enumerate(analyzed_rows, start=1):
+        for col_index, column in enumerate(ticket_columns):
+            value = row.get(column, "")
+            tickets_sheet.write_string(
+                row_index,
+                col_index,
+                "" if value is None else str(value),
+            )
+
+    tickets_sheet.autofilter(
+        0, 0, len(analyzed_rows), len(ticket_columns) - 1
+    )
+
+    for col_index, column in enumerate(ticket_columns):
+        width = max(14, min(len(column) + 3, 24))
+
+        if column in {"Created_Date", "Resolved_Date"}:
+            width = 21
+        elif column == "SLA_Status":
+            width = 16
+
+        tickets_sheet.set_column(col_index, col_index, width)
+
+    if analyzed_rows and "SLA_Status" in ticket_columns:
+        sla_col = ticket_columns.index("SLA_Status")
+
+        tickets_sheet.conditional_format(
+            1, sla_col, len(analyzed_rows), sla_col,
+            {
+                "type": "text",
+                "criteria": "containing",
+                "value": "Breached",
+                "format": breach_fmt,
+            },
+        )
+
+        for good_status in ("Met", "Within SLA"):
+            tickets_sheet.conditional_format(
+                1, sla_col, len(analyzed_rows), sla_col,
+                {
+                    "type": "text",
+                    "criteria": "equal to",
+                    "value": good_status,
+                    "format": success_fmt,
+                },
+            )
+
+        tickets_sheet.conditional_format(
+            1, sla_col, len(analyzed_rows), sla_col,
+            {
+                "type": "text",
+                "criteria": "equal to",
+                "value": "Unknown",
+                "format": warning_fmt,
+            },
+        )
+
+    # --------------------------------------------------
+    # Sheet 3: SLA Breaches
+    # --------------------------------------------------
+    breach_rows = [
+        row for row in analyzed_rows
+        if row.get("SLA_Status") == "Breached"
+    ]
+
+    breaches_sheet = workbook.add_worksheet("Breaches")
+    breaches_sheet.freeze_panes(1, 0)
+    breaches_sheet.write_row(0, 0, ticket_columns, header_fmt)
+
+    for row_index, row in enumerate(breach_rows, start=1):
+        for col_index, column in enumerate(ticket_columns):
+            value = row.get(column, "")
+            breaches_sheet.write_string(
+                row_index,
+                col_index,
+                "" if value is None else str(value),
+            )
+
+    breaches_sheet.autofilter(
+        0, 0, len(breach_rows), len(ticket_columns) - 1
+    )
+    breaches_sheet.set_column(
+        0, len(ticket_columns) - 1, 20
+    )
+
+    # --------------------------------------------------
+    # Sheet 4: Data Quality
+    # --------------------------------------------------
+    quality_sheet = workbook.add_worksheet("Data Quality")
+    quality_sheet.write("A1", "Validation Issue", header_fmt)
+    quality_sheet.set_column("A:A", 95)
+
+    if warnings:
+        for row_index, warning in enumerate(warnings, start=1):
+            quality_sheet.write_string(
+                row_index, 0, str(warning)
+            )
+    else:
+        quality_sheet.write_string(
+            1, 0, "No validation warnings."
+        )
+
+    workbook.close()
+    return output_file
 
 
 def main():
@@ -400,12 +713,16 @@ def main():
         "\n".join(summary_lines) + "\n",
         encoding="utf-8",
     )
-
+    excel_file = generate_excel_report(
+    analyzed_rows,
+    warnings,
+    REPORT_DIR,
+)
     print("\n".join(summary_lines))
     print("\nReports generated successfully:")
     print(f"  Summary: {summary_file}")
     print(f"  Details: {detail_file}")
-
+    print(f"  Excel:   {excel_file}")
 
 if __name__ == "__main__":
     main()
