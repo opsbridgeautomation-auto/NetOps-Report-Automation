@@ -4,6 +4,7 @@ import unittest
 from src.sla_report import (
     classify_sla,
     validate_ticket_metadata,
+    validate_ticket_dates,
 )
 
 
@@ -97,6 +98,85 @@ class TestTicketMetadataValidation(unittest.TestCase):
             any("Unsupported priority" in issue for issue in issues)
         )
 
+
+class TestTicketDateValidation(unittest.TestCase):
+
+    def test_valid_resolved_ticket_dates(self):
+        row = {
+            "Created_Date": "2026-10-01 08:00",
+            "Resolved_Date": "2026-10-01 10:00",
+            "Status": "Resolved",
+        }
+
+        self.assertEqual(validate_ticket_dates(row, 2), [])
+
+    def test_missing_created_date(self):
+        row = {
+            "Created_Date": "",
+            "Resolved_Date": "2026-10-01 10:00",
+            "Status": "Resolved",
+        }
+
+        issues = validate_ticket_dates(row, 2)
+
+        self.assertTrue(
+            any("Created_Date is missing" in issue for issue in issues)
+        )
+
+    def test_invalid_created_date(self):
+        row = {
+            "Created_Date": "yesterday",
+            "Resolved_Date": "2026-10-01 10:00",
+            "Status": "Resolved",
+        }
+
+        issues = validate_ticket_dates(row, 2)
+
+        self.assertTrue(
+            any("Created_Date must use" in issue for issue in issues)
+        )
+
+    def test_resolved_ticket_missing_resolved_date(self):
+        row = {
+            "Created_Date": "2026-10-01 08:00",
+            "Resolved_Date": "",
+            "Status": "Resolved",
+        }
+
+        issues = validate_ticket_dates(row, 2)
+
+        self.assertTrue(
+            any("Resolved_Date is missing" in issue for issue in issues)
+        )
+
+    def test_resolution_before_creation_is_reported(self):
+        row = {
+            "Created_Date": "2026-10-01 10:00",
+            "Resolved_Date": "2026-10-01 08:00",
+            "Status": "Resolved",
+        }
+
+        issues = validate_ticket_dates(row, 2)
+
+        self.assertTrue(
+            any("earlier than Created_Date" in issue for issue in issues)
+        )
+
+    def test_open_ticket_with_resolved_date_is_reported(self):
+        row = {
+            "Created_Date": "2026-10-01 08:00",
+            "Resolved_Date": "2026-10-01 10:00",
+            "Status": "Open",
+        }
+
+        issues = validate_ticket_dates(row, 2)
+
+        self.assertTrue(
+            any(
+                "populated for an open ticket" in issue
+                for issue in issues
+            )
+        )
 
 if __name__ == "__main__":
     unittest.main()

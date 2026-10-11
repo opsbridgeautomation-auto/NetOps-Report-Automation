@@ -1,4 +1,4 @@
-
+from datetime import datetime
 import csv
 from collections import Counter
 from pathlib import Path
@@ -11,6 +11,8 @@ REPORT_DIR = PROJECT_ROOT / "reports"
 
 REQUIRED_COLUMNS = [
     "Ticket_ID",
+    "Created_Date",
+    "Resolved_Date",
     "Priority",
     "Status",
     "Category",
@@ -65,6 +67,72 @@ def validate_ticket_metadata(row, row_number, seen_ticket_ids):
 
     return issues, False
 
+
+def validate_ticket_dates(row, row_number):
+    """Check ticket timestamps and basic date consistency."""
+    issues = []
+
+    created_text = (row.get("Created_Date") or "").strip()
+    resolved_text = (row.get("Resolved_Date") or "").strip()
+    status = (row.get("Status") or "").strip().casefold()
+
+    created_at = None
+    resolved_at = None
+
+    date_format = "%Y-%m-%d %H:%M"
+
+    # Every ticket should have a valid creation timestamp.
+    if not created_text:
+        issues.append(
+            f"Row {row_number}: Created_Date is missing."
+        )
+    else:
+        try:
+            created_at = datetime.strptime(
+                created_text, date_format
+            )
+        except ValueError:
+            issues.append(
+                f"Row {row_number}: Created_Date must use "
+                "YYYY-MM-DD HH:MM format."
+            )
+
+    # Resolved tickets must have a valid resolution timestamp.
+    if status == "resolved":
+        if not resolved_text:
+            issues.append(
+                f"Row {row_number}: Resolved_Date is missing "
+                "for a resolved ticket."
+            )
+        else:
+            try:
+                resolved_at = datetime.strptime(
+                    resolved_text, date_format
+                )
+            except ValueError:
+                issues.append(
+                    f"Row {row_number}: Resolved_Date must use "
+                    "YYYY-MM-DD HH:MM format."
+                )
+
+            if (
+                created_at is not None
+                and resolved_at is not None
+                and resolved_at < created_at
+            ):
+                issues.append(
+                    f"Row {row_number}: Resolved_Date is earlier "
+                    "than Created_Date."
+                )
+
+    # An open ticket should not have a resolution timestamp.
+    elif status in OPEN_STATUSES and resolved_text:
+        issues.append(
+            f"Row {row_number}: Resolved_Date is populated "
+            "for an open ticket."
+        )
+
+    return issues
 
 def classify_sla(status, target_hours, measured_hours):
     """Classify ticket SLA status using its target and measured duration."""
@@ -163,7 +231,7 @@ def main():
 
             if skip_row:
                 continue
-
+            warnings.extend(validate_ticket_dates(row, row_number))
             status = row["Status"].strip().lower()
 
             target_hours = parse_number(
