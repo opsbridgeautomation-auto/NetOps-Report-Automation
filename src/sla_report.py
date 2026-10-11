@@ -23,6 +23,49 @@ REQUIRED_COLUMNS = [
 
 OPEN_STATUSES = {"open", "in progress", "pending", "new", "on hold"}
 
+
+VALID_PRIORITIES = {"critical", "high", "medium", "low"}
+
+
+def validate_ticket_metadata(row, row_number, seen_ticket_ids):
+    """Validate ticket IDs and priorities.
+
+    Returns:
+        (issues, skip_row)
+    """
+    issues = []
+    ticket_id = (row.get("Ticket_ID") or "").strip()
+
+    if not ticket_id:
+        issues.append(
+            f"Row {row_number}: Ticket_ID is missing; record skipped."
+        )
+        return issues, True
+
+    normalized_id = ticket_id.casefold()
+
+    if normalized_id in seen_ticket_ids:
+        issues.append(
+            f"Row {row_number}: Duplicate Ticket_ID "
+            f"{ticket_id!r}; duplicate record skipped."
+        )
+        return issues, True
+
+    seen_ticket_ids.add(normalized_id)
+
+    priority = (row.get("Priority") or "").strip().casefold()
+
+    if not priority:
+        issues.append(f"Row {row_number}: Priority is missing.")
+    elif priority not in VALID_PRIORITIES:
+        issues.append(
+            f"Row {row_number}: Unsupported priority "
+            f"{row['Priority']!r}."
+        )
+
+    return issues, False
+
+
 def classify_sla(status, target_hours, measured_hours):
     """Classify ticket SLA status using its target and measured duration."""
 
@@ -72,13 +115,21 @@ def main():
 
     warnings = []
     analyzed_rows = []
+    seen_ticket_ids = set()
+
+    # Read and validate the input CSV.
+    
+    warnings = []
+    analyzed_rows = []
+    seen_ticket_ids = set()
 
     # Read and validate the input CSV.
     with INPUT_FILE.open(
         "r", newline="", encoding="utf-8-sig"
     ) as csv_file:
         reader = csv.DictReader(
-            line for line in csv_file if line.strip())
+            line for line in csv_file if line.strip()
+        )
 
         if not reader.fieldnames:
             print("ERROR: The input CSV is empty or has no header.")
@@ -98,11 +149,20 @@ def main():
 
         input_columns = list(reader.fieldnames)
 
+        # IMPORTANT: Process and append every ticket inside this loop.
         for row_number, source_row in enumerate(reader, start=2):
             row = {
                 column: (source_row.get(column) or "").strip()
                 for column in input_columns
             }
+
+            metadata_issues, skip_row = validate_ticket_metadata(
+                row, row_number, seen_ticket_ids
+            )
+            warnings.extend(metadata_issues)
+
+            if skip_row:
+                continue
 
             status = row["Status"].strip().lower()
 
@@ -116,12 +176,11 @@ def main():
 
             if target_hours is not None and target_hours <= 0:
                 warnings.append(
-                    f"Row {row_number}: SLA target must be greater than zero."
+                    f"Row {row_number}: "
+                    "SLA target must be greater than zero."
                 )
                 target_hours = None
 
-            # Use resolution time for resolved tickets and elapsed
-            # time for open tickets.
             if status == "resolved":
                 measured_hours = parse_number(
                     row["Resolution_Hours"],
@@ -147,12 +206,16 @@ def main():
 
             if measured_hours is not None and measured_hours < 0:
                 warnings.append(
-                    f"Row {row_number}: measured hours cannot be negative."
+                    f"Row {row_number}: "
+                    "measured hours cannot be negative."
                 )
                 measured_hours = None
 
-            sla_status = classify_sla(status, target_hours, measured_hours)
+            sla_status = classify_sla(
+                status, target_hours, measured_hours
+            )
 
+            # This line must remain INSIDE the for loop.
             analyzed_rows.append({
                 **row,
                 "SLA_Status": sla_status,
