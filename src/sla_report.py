@@ -3,7 +3,7 @@ import csv
 from collections import Counter
 from pathlib import Path
 import xlsxwriter
-
+import argparse
 # Find the project directory regardless of where the script is launched.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_FILE = PROJECT_ROOT / "data" / "sample_tickets.csv"
@@ -488,10 +488,12 @@ def generate_excel_report(analyzed_rows, warnings, report_dir):
     return output_file
 
 
-def main():
-    if not INPUT_FILE.exists():
-        print(f"ERROR: Input file not found: {INPUT_FILE}")
-        print("Check that data/sample_tickets.csv exists.")
+def main(input_file=INPUT_FILE, report_dir=REPORT_DIR):
+    input_file = Path(input_file)
+    report_dir = Path(report_dir)
+    if not input_file.exists():
+        print(f"ERROR: Input file not found: {input_file}")
+        print("Check that the specified input file exists.")
         return
 
     warnings = []
@@ -505,7 +507,7 @@ def main():
     seen_ticket_ids = set()
 
     # Read and validate the input CSV.
-    with INPUT_FILE.open(
+    with input_file.open(
         "r", newline="", encoding="utf-8-sig"
     ) as csv_file:
         reader = csv.DictReader(
@@ -646,10 +648,10 @@ def main():
     )
 
     # Create the output directory only when needed.
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
 
     # Export ticket-level analysis.
-    detail_file = REPORT_DIR / "ticket_analysis.csv"
+    detail_file = report_dir / "ticket_analysis.csv"
     output_columns = input_columns + (
         ["SLA_Status"] if "SLA_Status" not in input_columns else []
     )
@@ -669,7 +671,7 @@ def main():
     summary_lines = [
         "OPSB​​RIDGE SLA REPORT".replace("\u200b", ""),
         "=" * 32,
-        f"Input file: {INPUT_FILE.name}",
+        f"Input file: {input_file.name}",
         f"Total tickets: {len(analyzed_rows)}",
         f"Resolved tickets: {len(resolved_rows)}",
         f"Open/in-progress tickets: {len(open_rows)}",
@@ -708,7 +710,7 @@ def main():
     else:
         summary_lines.append("No validation warnings.")
 
-    summary_file = REPORT_DIR / "sla_summary.txt"
+    summary_file = report_dir / "sla_summary.txt"
     summary_file.write_text(
         "\n".join(summary_lines) + "\n",
         encoding="utf-8",
@@ -716,7 +718,7 @@ def main():
     excel_file = generate_excel_report(
     analyzed_rows,
     warnings,
-    REPORT_DIR,
+    report_dir,
 )
     print("\n".join(summary_lines))
     print("\nReports generated successfully:")
@@ -725,4 +727,27 @@ def main():
     print(f"  Excel:   {excel_file}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Generate SLA reports from a ticket CSV."
+    )
+
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=INPUT_FILE,
+        help="Path to the input ticket CSV.",
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPORT_DIR,
+        help="Directory where reports will be saved.",
+    )
+
+    args = parser.parse_args()
+
+    main(
+        input_file=args.input,
+        report_dir=args.output,
+    )
