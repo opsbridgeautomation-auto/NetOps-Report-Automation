@@ -1,0 +1,29 @@
+OPSBRIDGE SLA REPORT
+================================
+Input file: sample_tickets.csv
+Total tickets: 12
+Resolved tickets: 8
+Open/in-progress tickets: 4
+
+RESOLVED TICKET SLA RESULTS
+--------------------------------
+Resolved tickets with usable SLA data: 8
+SLA met: 5
+SLA breached: 3
+Resolved SLA compliance: 62.5%
+
+OPEN TICKET SLA RESULTS
+--------------------------------
+Open tickets currently breaching SLA: 2
+Tickets with unknown SLA status: 0
+
+TICKETS BY PRIORITY
+--------------------------------
+Critical: 2
+High: 4
+Low: 3
+Medium: 3
+
+DATA VALIDATION
+--------------------------------
+No validation warnings.
